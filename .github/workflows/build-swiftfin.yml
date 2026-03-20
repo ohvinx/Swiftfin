@@ -1,14 +1,14 @@
-name: "Generate Swiftfin IPA"
+name: "Build Unsigned Swiftfin IPA"
 
 on:
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-15
     strategy:
       matrix:
-        scheme: ["Swiftfin", "Swiftfin tvOS"]
+        scheme: ["Swiftfin"] # Add "Swiftfin tvOS" if needed
 
     steps:
       - name: Checkout
@@ -24,39 +24,32 @@ jobs:
           key: ${{ runner.os }}-carthage-${{ hashFiles('**/Cartfile.resolved') }}
 
       - name: Update Carthage
-        run: carthage update --use-xcframeworks --platform ios,tvos --cache-builds
+        run: carthage update --use-xcframeworks --platform ios --cache-builds
 
-      - name: Import Certificates
-        uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ secrets.P12_BASE64 }}
-          p12-password: ${{ secrets.P12_PASSWORD }}
-          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
-
-      - name: Import Provisioning Profile
-        run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/build.mobileprovision
-
-      - name: Archive
+      - name: Build Archive (Unsigned)
         run: |
           xcodebuild archive \
             -project Swiftfin.xcodeproj \
             -scheme "${{ matrix.scheme }}" \
             -configuration Release \
             -archivePath build/${{ matrix.scheme }}.xcarchive \
-            -destination "generic/platform=iOS"
+            -destination "generic/platform=iOS" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
-      - name: Export IPA
+      - name: Package Unsigned IPA
         run: |
-          xcodebuild -exportArchive \
-            -archivePath build/${{ matrix.scheme }}.xcarchive \
-            -exportOptionsPlist ExportOptions.plist \
-            -exportPath output/ \
-            -allowProvisioningUpdates
+          mkdir -p Payload
+          # Copy the .app bundle from the archive into the Payload folder
+          cp -r build/${{ matrix.scheme }}.xcarchive/Products/Applications/*.app Payload/
+          # Zip it and rename to .ipa
+          zip -r "${{ matrix.scheme }}_Unsigned.ipa" Payload
+          mkdir -p output
+          mv "${{ matrix.scheme }}_Unsigned.ipa" output/
 
-      - name: Upload IPA
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.scheme }}-IPA
+          name: ${{ matrix.scheme }}-Unsigned-IPA
           path: output/*.ipa
