@@ -1,0 +1,62 @@
+name: "Generate Swiftfin IPA"
+
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  build:
+    runs-on: macos-15
+    strategy:
+      matrix:
+        scheme: ["Swiftfin", "Swiftfin tvOS"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: brew install swiftgen carthage
+
+      - name: Cache Carthage
+        uses: actions/cache@v4
+        with:
+          path: Carthage
+          key: ${{ runner.os }}-carthage-${{ hashFiles('**/Cartfile.resolved') }}
+
+      - name: Update Carthage
+        run: carthage update --use-xcframeworks --platform ios,tvos --cache-builds
+
+      - name: Import Certificates
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.P12_BASE64 }}
+          p12-password: ${{ secrets.P12_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      - name: Import Provisioning Profile
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/build.mobileprovision
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project Swiftfin.xcodeproj \
+            -scheme "${{ matrix.scheme }}" \
+            -configuration Release \
+            -archivePath build/${{ matrix.scheme }}.xcarchive \
+            -destination "generic/platform=iOS"
+
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/${{ matrix.scheme }}.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath output/ \
+            -allowProvisioningUpdates
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.scheme }}-IPA
+          path: output/*.ipa
